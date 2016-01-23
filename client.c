@@ -4,13 +4,13 @@
 #include <stdint.h>
 #include <arpa/inet.h> //inet_addr
 #include <unistd.h>
-#include <fcntl.h>
+#include <fcntl.h> 
 
-const static char http_get[] = "GET / HTTP/1.1\r\n";
+const static char http_get[] = "GET %s HTTP/1.1\r\n";
 const static char http_upgrade[] = "Upgrade: websocket\r\n";
 const static char http_connection[] = "Connection: Upgrade\r\n";
 const static char http_ws_key[] = "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
-const static char http_ws_version[] = "Sec-WebSocket-Version: 13\r\n\r\n";
+const static char http_ws_version[] = "Sec-WebSocket-Version: 13\r\n";
 
 #define WS_OPCODE_CONTINUATION 0x00
 #define WS_OPCODE_TEXT 0x01
@@ -28,7 +28,23 @@ struct WsFrame {
 	uint8_t *payload;
 };
 
-void WsInitFrame(WsFrame *frame) {
+void wsConnect(int socketId, const char *path) {
+	char *server_reply[2000];
+	char buffer[300];
+
+    sprintf(buffer, http_get, path);
+    send(socketId, buffer, strlen(buffer) , 0);
+    send(socketId, http_upgrade, strlen(http_upgrade) , 0);
+    send(socketId, http_connection, strlen(http_connection) , 0);
+    send(socketId, http_ws_key, strlen(http_ws_key) , 0);
+    send(socketId, http_ws_version, strlen(http_ws_version) , 0);
+    send(socketId, "\r\n", 2, 0);
+
+    memset(server_reply, 0, 2000);
+    recv(socketId, server_reply , 2000 , 0);
+}
+
+void wsInitFrame(WsFrame *frame) {
 	frame->finFlag = 0;
 	frame->maskingFlag = 0;
 	frame->opcode = 0;
@@ -37,7 +53,7 @@ void WsInitFrame(WsFrame *frame) {
 	frame->payload = 0;
 }
 
-void WsCreateTextFrame(WsFrame *frame, const char *text) {
+void wsCreateTextFrame(WsFrame *frame, const char *text) {
 	frame->finFlag = 1;
 	frame->maskingFlag = 1;
 	frame->opcode = WS_OPCODE_TEXT;
@@ -46,7 +62,7 @@ void WsCreateTextFrame(WsFrame *frame, const char *text) {
 	frame->payload = (uint8_t *)text;
 }
 
-void WsSendTextFrame(int socket_desc, WsFrame *frame) {
+void wsSendFrame(int socket_desc, WsFrame *frame) {
 	uint8_t finOpcode = (frame->finFlag) ? frame->opcode | 0x80 : frame->opcode;
 	uint8_t maskPayloadLength = (frame->maskingFlag) ? frame->payloadLenght | 0x80 : frame->payloadLenght;	// todo support extended payloadLength
 	send(socket_desc , &finOpcode , 1 , 0);
@@ -55,7 +71,7 @@ void WsSendTextFrame(int socket_desc, WsFrame *frame) {
 	send(socket_desc , frame->payload, frame->payloadLenght , 0);
 }
 
-void WsReceiveFrame(int socket, WsFrame *frame) {
+void wsReceiveFrame(int socket, WsFrame *frame) {
 	char inBuffer[256];
 	int receivedTotal = 0;
 	int receivedLength = 0;
@@ -72,15 +88,23 @@ void WsReceiveFrame(int socket, WsFrame *frame) {
     frame->finFlag = (inBuffer[0] & 0x80) >> 7;
     frame->opcode = inBuffer[0] & 0x0F;
     frame->maskingFlag = inBuffer[1] & 0x80;
-    frame->payloadLenght = inBuffer[1] & 0x7F;
+    frame->payloadLenght = inBuffer[1] & 0x7F;	// Todo: support extended payload length
     memcpy(frame->payload, inBuffer + 2, receivedTotal - 2);
 }
 
-void sendData(int socket_desc, const char *data) {
-    if( send(socket_desc , data , strlen(data) , 0) < 0)
-    {
-        puts("Send failed");
-    }
+void wsSendText(int socket, const char *text) {
+	WsFrame frame;
+	wsInitFrame(&frame);
+	wsCreateTextFrame(&frame, text);
+    wsSendFrame(socket, &frame);
+}
+
+void wsReceiveText(int socket, char *buffer, int bufferSize) {
+	WsFrame frame;
+	wsInitFrame(&frame);
+	memset(buffer, 0, bufferSize);
+	frame.payload = (uint8_t *)buffer;
+	wsReceiveFrame(socket, &frame);
 }
 
 void printFrame(WsFrame *frame) {
@@ -95,7 +119,7 @@ void printFrame(WsFrame *frame) {
 		sprintf(buffer, "mask: %08X", frame->maskingMap);
 		puts(buffer);
 	}
-	sprintf(buffer, "payloadLength: %d", frame->payloadLenght);
+	sprintf(buffer, "payloadLength: %llu", frame->payloadLenght);
 	puts(buffer);
 	sprintf(buffer, "payload: %s", frame->payload);
 	puts(buffer);
@@ -103,57 +127,26 @@ void printFrame(WsFrame *frame) {
 
 int main(int argc , char *argv[])
 {
-    int socket_desc;
-    struct sockaddr_in server;
-    char *message , server_reply[2000];
+	char text [1024];
+	int socketId = 0;
+	struct sockaddr_in server;
+	socketId = socket(AF_INET , SOCK_STREAM , 0);
 
-    //Create socket
-    socket_desc = socket(AF_INET , SOCK_STREAM , 0);
-    if (socket_desc == -1)
-    {
-        printf("Could not create socket");
-    }
-         
     server.sin_addr.s_addr = inet_addr("127.0.0.1");
     server.sin_family = AF_INET;
-    server.sin_port = htons( 8080 );
- 
-    //Connect to remote server
-    if (connect(socket_desc , (struct sockaddr *)&server , sizeof(server)) < 0)
-    {
-        puts("connect error");
-        return 1;
-    }
-     
-    puts("Connected\n");
-    sendData(socket_desc, http_get);
-	sendData(socket_desc, http_upgrade);
-	sendData(socket_desc, http_connection);
-	sendData(socket_desc, http_ws_key);
-	sendData(socket_desc, http_ws_version);
-    puts("Data Send\n");
+    server.sin_port = htons(8080);
 
-    memset(server_reply, 0, 2000);
-    if( recv(socket_desc, server_reply , 2000 , 0) < 0)
+    if (connect(socketId , (struct sockaddr *)&server , sizeof(server)) < 0)
     {
-        puts("recv failed");
+        return 2;
     }
-    puts(server_reply);
 
-	char string [256];
-	WsFrame frame;
-	WsInitFrame(&frame);
+	wsConnect(socketId, "/");
     while(1) {
-    	gets (string);
-
-    	WsCreateTextFrame(&frame, string);
-    	WsSendTextFrame(socket_desc, &frame);
-    	printFrame(&frame);
-
-    	puts("=============");
-
-    	WsReceiveFrame(socket_desc, &frame);
-    	printFrame(&frame);
+    	gets(text);
+    	wsSendText(socketId, text);
+    	wsReceiveText(socketId, text, 1024);
+    	puts(text);
     }
 
     return 0;
