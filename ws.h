@@ -1,3 +1,6 @@
+#ifndef WEBSOCKETS
+#define WEBSOCKETS
+
 struct WsFrame {
 	uint8_t finFlag;
 	uint8_t maskingFlag;
@@ -14,3 +17,5 @@ void wsSendFrame(int socket_desc, WsFrame *frame);
 void wsReceiveFrame(int socket, WsFrame *frame);
 void wsSendText(int socket, const char *text);
 void wsReceiveText(int socket, char *buffer, int bufferSize);
+
+#endif

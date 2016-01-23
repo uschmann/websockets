@@ -1,9 +1,7 @@
 #include <stdio.h>
-#include <string.h>    //strlen
+#include <string.h>
 #include <sys/socket.h>
 #include <stdint.h>
-#include <arpa/inet.h> //inet_addr
-#include <unistd.h>
 #include <fcntl.h> 
 #include "ws.h"
 
