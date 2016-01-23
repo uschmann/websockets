@@ -69,16 +69,21 @@ void wsReceiveFrame(int socket, WsFrame *frame) {
 	memset(inBuffer, 0, 256);
 	// set socket to blocking to wait for the first available bytes
 	fcntl(socket, F_SETFL, fcntl(socket, F_GETFL, 0) & ~O_NONBLOCK);
-	while((receivedLength = recv(socket, inBuffer + receivedTotal, 255, 0)) > 0) {
+	while((receivedLength = recv(socket, inBuffer + receivedTotal, 2 - receivedTotal, 0)) > 0 && receivedTotal < 2) {
 		// set socket to non blocking
    		fcntl(socket, F_SETFL, fcntl(socket, F_GETFL, 0) | O_NONBLOCK);
     	receivedTotal += receivedLength;
     }
-
     frame->finFlag = (inBuffer[0] & 0x80) >> 7;
     frame->opcode = inBuffer[0] & 0x0F;
     frame->maskingFlag = inBuffer[1] & 0x80;
     frame->payloadLenght = inBuffer[1] & 0x7F;	// Todo: support extended payload length
+
+
+	while((receivedLength = recv(socket, inBuffer + receivedTotal, frame->payloadLenght + 2 - receivedTotal, 0)) > 0 && receivedTotal < frame->payloadLenght) {
+    	receivedTotal += receivedLength;
+    }
+
     memcpy(frame->payload, inBuffer + 2, receivedTotal - 2);
 }
 
